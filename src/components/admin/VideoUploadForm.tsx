@@ -434,7 +434,7 @@ export function VideoUploadForm({ onUploaded }: { onUploaded?: () => void }) {
       setDescription("");
       setClassId(NO_CLASS);
       setFolderId(NO_FOLDER); setUpFolderHint(null); setUpSubjectHint(null);
-      setIsPublished(false);
+      setIsPublished(true);
       setSortOrder(0);
       setPlayback(DEFAULT_PLAYBACK);
       setWeekLabel(weekLabelFromDate());
@@ -486,7 +486,7 @@ export function VideoUploadForm({ onUploaded }: { onUploaded?: () => void }) {
       setYtDesc("");
       setYtClassId(NO_CLASS);
       setYtFolderId(NO_FOLDER); setYtFolderHint(null); setYtSubjectHint(null);
-      setYtPublished(false);
+      setYtPublished(true);
       setYtSort(0);
       setYtPlayback(DEFAULT_PLAYBACK);
       setYtWeekLabel(weekLabelFromDate());
