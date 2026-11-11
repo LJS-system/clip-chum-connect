@@ -11,6 +11,7 @@ import { listClasses, listMyRecentProgress } from "@/lib/classes.functions";
 import { ClassThumb } from "@/components/ClassThumb";
 import { prefetchSignedThumbUrls, extractStoragePath } from "@/lib/signed-url-cache";
 import { VideoThumb } from "@/components/VideoThumb";
+import { InstallAppCard } from "@/components/InstallAppCard";
 
 
 export const Route = createFileRoute("/mypage")({
@@ -109,6 +110,8 @@ function MyPage() {
             )}
           </CardContent>
         </Card>
+
+        <InstallAppCard />
 
         <Card>
           <CardHeader>
