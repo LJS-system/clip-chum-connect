@@ -663,59 +663,92 @@ export const listStudentUsers = createServerFn({ method: "GET" })
     const terms = data.search.trim().split(/\s+/).filter(Boolean).slice(0, 10);
     const classFilter = data.classFilter ?? "all";
 
-    // 수강반 유무 필터용: 현재 조회 권한 내 수강반에 등록된 학생 id 집합
-    let classUserIds: string[] | null = null;
-    if (classFilter !== "all") {
-      let csq = supabaseAdmin
-        .from("class_students")
-        .select("user_id, classes!inner(branch, deleted_at)")
-        .is("deleted_at", null)
-        .is("classes.deleted_at", null);
-      if (scope.branch) {
-        csq = csq.or(`classes.branch.eq.${scope.branch},classes.branch.is.null`);
+    // 1,000줄 제한 없이 끝까지 나눠 받기 (빌더는 매번 새로 만들어야 함)
+    const pageAll = async <T,>(
+      build: (from: number, to: number) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+    ): Promise<T[]> => {
+      const out: T[] = [];
+      const size = 1000;
+      for (let from = 0; ; from += size) {
+        const { data: chunk, error: e } = await build(from, from + size - 1);
+        if (e) throw new Error(e.message);
+        const list = (chunk ?? []) as T[];
+        out.push(...list);
+        if (list.length < size) break;
       }
-      const { data: cs } = await csq;
-      classUserIds = Array.from(new Set((cs ?? []).map((r: any) => r.user_id as string)));
-    }
+      return out;
+    };
 
-    let q = supabaseAdmin
-      .from("external_students")
-      .select("auth_user_id, name, phone, parent_phone, branch, enrollment_status, created_at", { count: "exact" })
-      .not("auth_user_id", "is", null)
-      .eq("is_deleted", false)
-      .not("enrollment_status", "is", null)
-      .neq("enrollment_status", "휴원");
+    type CsRow = { user_id: string; classes: { branch: string | null; deleted_at: string | null } | null };
+    const [csRows, roleRows, studentRows] = await Promise.all([
+      pageAll<CsRow>((f, t) =>
+        supabaseAdmin
+          .from("class_students")
+          .select("user_id, classes(branch, deleted_at)")
+          .is("deleted_at", null)
+          .order("class_id")
+          .order("user_id")
+          .range(f, t),
+      ),
+      pageAll<{ user_id: string; role: string }>((f, t) =>
+        supabaseAdmin
+          .from("user_roles")
+          .select("user_id, role")
+          .is("deleted_at", null)
+          .order("user_id")
+          .order("role")
+          .range(f, t),
+      ),
+      pageAll<any>((f, t) => {
+        let q = supabaseAdmin
+          .from("external_students")
+          .select("id, auth_user_id, name, phone, parent_phone, branch, enrollment_status, created_at")
+          .not("auth_user_id", "is", null)
+          .eq("is_deleted", false)
+          .not("enrollment_status", "is", null)
+          .neq("enrollment_status", "휴원");
+        if (branch) q = q.ilike("branch", `%${canonicalBranch(branch)}%`);
+        if (terms.length > 0) {
+          const orConditions = terms
+            .map((t) => {
+              const digits = t.replace(/[^0-9]/g, "");
+              const isPhoneLike = digits.length >= 2 && digits.length === t.replace(/[-\s]/g, "").length;
+              if (isPhoneLike) {
+                return `phone.ilike.%${digits}%,parent_phone.ilike.%${digits}%`;
+              }
+              return `name.ilike.%${t}%`;
+            })
+            .join(",");
+          q = q.or(orConditions);
+        }
+        return q.order("name", { ascending: true }).order("id", { ascending: true }).range(f, t);
+      }),
+    ]);
 
-    if (branch) q = q.ilike("branch", `%${canonicalBranch(branch)}%`);
+    // 수강반 수(기존과 같이 삭제 안 된 등록 전부)
+    const classCount = new Map<string, number>();
+    csRows.forEach((r) => classCount.set(r.user_id, (classCount.get(r.user_id) ?? 0) + 1));
 
-    if (classFilter === "has_class" && classUserIds) {
-      const ids = classUserIds.length > 0 ? classUserIds : ["00000000-0000-0000-0000-000000000000"];
-      q = q.in("auth_user_id", ids);
-    } else if (classFilter === "no_class" && classUserIds) {
-      const ids = classUserIds.length > 0 ? classUserIds : ["00000000-0000-0000-0000-000000000000"];
-      q = q.not("auth_user_id", "in", ids);
-    }
+    // 수강반 유무 필터: 현재 조회 권한 내 살아있는 수강반에 등록된 학생 id 집합.
+    // 예전에는 이 id 수백 개를 .in(...)으로 주소에 붙여 보내서 주소가 너무 길어져
+    // 조회가 실패했고, 그래서 '수강반 있음'을 고르면 아무도 안 보였다. 이제 서버 안에서 거른다.
+    const classUserIds = new Set<string>();
+    csRows.forEach((r) => {
+      const c = r.classes;
+      if (!c || c.deleted_at) return;
+      if (scope.branch && c.branch && c.branch !== scope.branch) return;
+      classUserIds.add(r.user_id);
+    });
 
-    if (terms.length > 0) {
-      const orConditions = terms
-        .map((t) => {
-          const digits = t.replace(/[^0-9]/g, "");
-          const isPhoneLike = digits.length >= 2 && digits.length === t.replace(/[-\s]/g, "").length;
-          if (isPhoneLike) {
-            return `phone.ilike.%${digits}%,parent_phone.ilike.%${digits}%`;
-          }
-          return `name.ilike.%${t}%`;
-        })
-        .join(",");
-      q = q.or(orConditions);
-    }
-
-    const { data: rows, count, error } = await q.order("name", { ascending: true });
-    if (error) throw new Error(error.message);
+    const rows = studentRows.filter((r: any) => {
+      if (classFilter === "has_class") return classUserIds.has(r.auth_user_id);
+      if (classFilter === "no_class") return !classUserIds.has(r.auth_user_id);
+      return true;
+    });
 
     // 정확히 일치하는 이름을 최상단에 배치한 뒤 나머지는 가나다순
     const lowerTerms = terms.map((t) => t.toLowerCase());
-    const sortedRows = (rows ?? []).sort((a: any, b: any) => {
+    const sortedRows = rows.sort((a: any, b: any) => {
       const aName = (a.name ?? "").toLowerCase();
       const bName = (b.name ?? "").toLowerCase();
       const aExact = lowerTerms.some((t) => aName === t);
@@ -728,34 +761,8 @@ export const listStudentUsers = createServerFn({ method: "GET" })
     const from = (data.page - 1) * data.pageSize;
     const pagedRows = sortedRows.slice(from, from + data.pageSize);
 
-    // 학생 수가 많으면 .in(user_id, ...) URL이 너무 길어져 조용히 실패하므로
-    // 전체를 페이징 조회해 로컬에서 매칭한다.
-    const fetchAll = async <T,>(table: "class_students" | "user_roles", columns: string): Promise<T[]> => {
-      const out: T[] = [];
-      const size = 1000;
-      let from = 0;
-      // eslint-disable-next-line no-constant-condition
-      while (true) {
-        const { data: chunk, error: e } = await supabaseAdmin
-          .from(table)
-          .select(columns)
-          .is("deleted_at", null)
-          .range(from, from + size - 1);
-        if (e) throw new Error(e.message);
-        out.push(...((chunk ?? []) as T[]));
-        if ((chunk ?? []).length < size) break;
-        from += size;
-      }
-      return out;
-    };
-    const [csRows, roleRows] = await Promise.all([
-      fetchAll<{ user_id: string }>("class_students", "user_id"),
-      fetchAll<{ user_id: string; role: string }>("user_roles", "user_id, role"),
-    ]);
-    const classCount = new Map<string, number>();
-    (csRows ?? []).forEach((r: any) => classCount.set(r.user_id, (classCount.get(r.user_id) ?? 0) + 1));
     const roleMap = new Map<string, string[]>();
-    (roleRows ?? []).forEach((r: any) => {
+    roleRows.forEach((r) => {
       const list = roleMap.get(r.user_id) ?? [];
       list.push(r.role);
       roleMap.set(r.user_id, list);
@@ -770,8 +777,8 @@ export const listStudentUsers = createServerFn({ method: "GET" })
     };
 
     return {
-      total: count ?? 0,
-      rows: (rows ?? []).map((r: any) => {
+      total: sortedRows.length,
+      rows: pagedRows.map((r: any) => {
         const roles = roleMap.get(r.auth_user_id) ?? [];
         return {
           id: r.auth_user_id as string,
