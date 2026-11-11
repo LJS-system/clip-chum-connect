@@ -15,6 +15,8 @@ import { reportLovableError } from "../lib/lovable-error-reporting";
 import { Toaster } from "@/components/ui/sonner";
 import { InAppBrowserNotice } from "@/components/InAppBrowserNotice";
 import { MobileTabBar } from "@/components/MobileTabBar";
+// 설치 안내 이벤트(beforeinstallprompt)가 화면보다 먼저 올 수 있어 앱 시작 때 바로 받아 둔다.
+import "@/lib/pwa-install";
 
 function NotFoundComponent() {
   return (
@@ -91,6 +93,12 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:description", content: "이재식국어 학생 전용 강의 시청 플랫폼." },
       { property: "og:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/42c5c802-d4a7-45e3-9f77-8bcbd0b9462d/id-preview-b99cca34--0fcc945a-b463-4558-b725-06f4738edd97.lovable.app-1784603211222.png" },
       { name: "twitter:image", content: "https://pub-bb2e103a32db4e198524a2e9ed8f35b4.r2.dev/42c5c802-d4a7-45e3-9f77-8bcbd0b9462d/id-preview-b99cca34--0fcc945a-b463-4558-b725-06f4738edd97.lovable.app-1784603211222.png" },
+      // 홈 화면에 추가했을 때 앱처럼 열리게 하는 설정 (manifest.webmanifest와 함께 동작)
+      { name: "theme-color", content: "#39b457" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-title", content: "이재식국어" },
+      { name: "apple-mobile-web-app-status-bar-style", content: "default" },
     ],
     links: [
       {
@@ -98,6 +106,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
     ],
   }),
   shellComponent: RootShell,
