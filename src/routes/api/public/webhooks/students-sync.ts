@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createClient } from "@supabase/supabase-js";
 import { resolveStudentCohort } from "@/lib/cohort";
+import { alternateMirrorEmail, decideEmailConflict } from "@/lib/student-mirror-account";
 
 // 마스터 teachers 표에서 담당 강사 이메일 조회 (기수 계산용). 접속 정보가 없거나 실패하면 null.
 async function fetchMasterTeacherEmail(teacherId: string | null): Promise<string | null> {
@@ -71,6 +72,80 @@ function fakeEmail(externalId: string, phone: string | null, rawEmail: string | 
   if (rawEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(rawEmail)) return rawEmail;
   const local = phone ?? externalId.replace(/-/g, "").slice(0, 12);
   return `student-${local}@mirror.local`;
+}
+
+type AdminClient = Awaited<typeof import("@/integrations/supabase/client.server")>["supabaseAdmin"];
+
+// 이메일로 로그인 계정 찾기. 예전에는 첫 200명만 봐서 사용자가 늘면 못 찾았다 → 끝까지 넘겨 본다.
+async function findAuthUserByEmail(admin: AdminClient, email: string) {
+  const target = email.toLowerCase();
+  const perPage = 1000;
+  for (let page = 1; page <= 50; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      console.error("listUsers failed", error);
+      return null;
+    }
+    const users = data?.users ?? [];
+    const found = users.find((u) => (u.email ?? "").toLowerCase() === target);
+    if (found) return found;
+    if (users.length < perPage) return null;
+  }
+  return null;
+}
+
+async function resolveEmailConflict(
+  admin: AdminClient,
+  args: {
+    email: string;
+    externalId: string;
+    name: string;
+    loginPhone: string | null;
+    password: string;
+    metadata: Record<string, unknown>;
+  },
+): Promise<string | null> {
+  const owner = await findAuthUserByEmail(admin, args.email);
+  if (!owner) return null;
+  // 이 학생 몫으로 이미 만들어 둔 계정(지난 요청이 중간에 끊긴 경우)
+  if (owner.user_metadata?.external_id === args.externalId) return owner.id;
+
+  const { data: ownerRows, error } = await admin
+    .from("external_students")
+    .select("name, is_deleted")
+    .eq("auth_user_id", owner.id)
+    .neq("external_id", args.externalId);
+  if (error) {
+    console.error("lookup email owner failed", error);
+    return null;
+  }
+
+  const decision = decideEmailConflict(args.name, ownerRows ?? []);
+  if (decision === "skip") {
+    console.warn("same-name active student already owns login; leaving unlinked", args.externalId);
+    return null;
+  }
+  if (decision === "link") {
+    const { error: updErr } = await admin.auth.admin.updateUserById(owner.id, {
+      user_metadata: args.metadata,
+    });
+    if (updErr) console.error("relink metadata failed", updErr);
+    return owner.id;
+  }
+
+  // separate: 형제 등 다른 학생 계정 → 두 번째 이메일로 새 계정
+  const altEmail = alternateMirrorEmail(args.externalId, args.loginPhone);
+  const { data: created, error: altErr } = await admin.auth.admin.createUser({
+    email: altEmail,
+    password: args.password,
+    email_confirm: true,
+    user_metadata: args.metadata,
+  });
+  if (created?.user) return created.user.id;
+  const existingAlt = await findAuthUserByEmail(admin, altEmail);
+  if (existingAlt?.user_metadata?.external_id === args.externalId) return existingAlt.id;
+  console.error("create separate login failed", altErr);
+  return null;
 }
 
 export const Route = createFileRoute("/api/public/webhooks/students-sync")({
@@ -160,11 +235,16 @@ export const Route = createFileRoute("/api/public/webhooks/students-sync")({
           });
 
           if (createErr) {
-            // If the email already exists, try to look it up so we can still link.
-            const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 200 });
-            const found = list?.users.find((u) => u.email === email);
-            if (found) authUserId = found.id;
-            else console.error("createUser failed", createErr);
+            // 이메일이 이미 쓰이는 경우(지웠다 다시 등록, 형제가 같은 번호 등): 주인을 보고 이어받거나 따로 만든다.
+            authUserId = await resolveEmailConflict(supabaseAdmin, {
+              email,
+              externalId,
+              name,
+              loginPhone,
+              password,
+              metadata: { name, phone, parent_phone: parentPhone, external_id: externalId, source: "master-mirror" },
+            });
+            if (!authUserId) console.error("createUser failed", createErr);
           } else if (created?.user) {
             authUserId = created.user.id;
           }
