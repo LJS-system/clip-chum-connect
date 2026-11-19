@@ -4,28 +4,28 @@ import { alternateMirrorEmail, decideEmailConflict } from "./student-mirror-acco
 
 describe("계정 이메일이 겹칠 때", () => {
   it("지워진 예전 기록이 같은 이름이면 예전 계정을 이어받는다", () => {
-    assert.equal(decideEmailConflict("노규원", [{ name: "노규원", is_deleted: true }]), "link");
+    assert.equal(decideEmailConflict("김학생", [{ name: "김학생", is_deleted: true }]), "link");
   });
   it("이름 공백 차이는 같은 이름으로 본다", () => {
-    assert.equal(decideEmailConflict("노규원", [{ name: "노 규원 ", is_deleted: true }]), "link");
+    assert.equal(decideEmailConflict("김학생", [{ name: "김 학생 ", is_deleted: true }]), "link");
   });
   it("살아 있는 형제 계정이면 새 계정을 따로 만든다", () => {
     assert.equal(
-      decideEmailConflict("최유나", [{ name: "최낙윤", is_deleted: false }]),
+      decideEmailConflict("이동생", [{ name: "이형", is_deleted: false }]),
       "separate",
     );
   });
   it("지워진 형제 계정도 이어받지 않고 따로 만든다", () => {
-    assert.equal(decideEmailConflict("손여진", [{ name: "손한슬", is_deleted: true }]), "separate");
+    assert.equal(decideEmailConflict("박동생", [{ name: "박형", is_deleted: true }]), "separate");
   });
   it("같은 이름 학생이 아직 살아 있으면(중복 등록) 건드리지 않는다", () => {
-    assert.equal(decideEmailConflict("이나경", [{ name: "이나경", is_deleted: false }]), "skip");
+    assert.equal(decideEmailConflict("최학생", [{ name: "최학생", is_deleted: false }]), "skip");
   });
   it("지워진 기록과 살아 있는 형제 기록이 섞이면 따로 만든다", () => {
     assert.equal(
-      decideEmailConflict("조이환", [
-        { name: "장예린", is_deleted: true },
-        { name: "장예린", is_deleted: false },
+      decideEmailConflict("정학생", [
+        { name: "한학생", is_deleted: true },
+        { name: "한학생", is_deleted: false },
       ]),
       "separate",
     );
