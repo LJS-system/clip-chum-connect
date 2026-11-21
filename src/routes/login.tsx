@@ -38,7 +38,7 @@ async function routeByStatus(navigate: ReturnType<typeof useNavigate>) {
       }
     } catch {}
     const s = await getMyStatus();
-    navigate({ to: s.isAdmin || s.isInstructor ? "/admin" : "/" });
+    navigate({ to: s.isAdmin || s.isInstructor || s.isAssistant ? "/admin" : "/" });
   } catch {
     navigate({ to: "/" });
   }

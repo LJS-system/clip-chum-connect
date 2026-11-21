@@ -28,8 +28,10 @@ async function roleFlags(context: any) {
     admin: roles.has("admin"),
     instructor: roles.has("instructor"),
     branchAdmin: roles.has("branch_admin"),
+    // 조교: 같은 기수 수강반 조회만
+    assistant: roles.has("assistant"),
   };
-  if (!flags.admin && !flags.instructor && !flags.branchAdmin) {
+  if (!flags.admin && !flags.instructor && !flags.branchAdmin && !flags.assistant) {
     throw new Error("관리자 또는 강사만 접근할 수 있습니다.");
   }
   return flags;
@@ -51,9 +53,56 @@ async function branchAdminClassIds(context: any, supabaseAdmin: any) {
   return ((data ?? []) as any[]).map((c: any) => c.id as string);
 }
 
-async function assertOwnClassOrAdmin(context: any, classId: string) {
+// 조교가 볼 수 있는 수강반 id: 본인 기수로 지정된 카테고리의 반 (교육원 전용 반은 본인 교육원만)
+// — 수강반 목록(listClasses)의 기수 규칙과 같게 맞춘다.
+async function assistantCohortClassIds(context: any, supabaseAdmin: any) {
+  const { data: me } = await supabaseAdmin
+    .from("instructors")
+    .select("cohort, cohorts, branch, all_branches")
+    .eq("auth_user_id", context.userId)
+    .maybeSingle();
+  const myCohorts: string[] = Array.from(
+    new Set([
+      ...((((me as any)?.cohorts ?? []) as string[]).filter(Boolean)),
+      ...((me as any)?.cohort ? [(me as any).cohort as string] : []),
+    ]),
+  );
+  if (myCohorts.length === 0) return [] as string[];
+  const { data: cats } = await supabaseAdmin
+    .from("class_categories")
+    .select("id")
+    .in("cohort", myCohorts)
+    .is("deleted_at", null);
+  const catIds = ((cats ?? []) as any[]).map((c: any) => c.id as string);
+  if (catIds.length === 0) return [] as string[];
+  const { data: classes } = await supabaseAdmin
+    .from("classes")
+    .select("id, branch")
+    .in("category_id", catIds)
+    .is("deleted_at", null);
+  const myBranch = ((me as any)?.branch ?? "").toString().trim();
+  const allBranches = (me as any)?.all_branches === true;
+  return ((classes ?? []) as any[])
+    .filter((c: any) => {
+      const b = (c.branch ?? "").toString().trim();
+      if (!b || allBranches) return true;
+      return !!myBranch && b === myBranch;
+    })
+    .map((c: any) => c.id as string);
+}
+
+async function assertOwnClassOrAdmin(
+  context: any,
+  classId: string,
+  mode: "read" | "write" = "read",
+) {
   const admin = await isAdmin(context);
   if (admin) return;
+  // 조교는 학습 기록을 바꿀 수 없다 (조회만)
+  if (mode === "write") {
+    const { assertNotAssistant } = await import("@/lib/staff-roles.server");
+    await assertNotAssistant(context);
+  }
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const { data, error } = await supabaseAdmin
     .from("classes")
@@ -103,7 +152,7 @@ async function assertOwnClassOrAdmin(context: any, classId: string) {
 export const getOverviewStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { admin, branchAdmin } = await roleFlags(context);
+    const { admin, branchAdmin, assistant } = await roleFlags(context);
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
@@ -129,6 +178,9 @@ export const getOverviewStats = createServerFn({ method: "GET" })
       (assigned.data ?? []).forEach((c: any) => set.add(c.class_id));
       if (branchAdmin) {
         (await branchAdminClassIds(context, supabaseAdmin)).forEach((id) => set.add(id));
+      }
+      if (assistant) {
+        (await assistantCohortClassIds(context, supabaseAdmin)).forEach((id) => set.add(id));
       }
       classIds = Array.from(set);
     }
@@ -166,7 +218,7 @@ export const getOverviewStats = createServerFn({ method: "GET" })
 export const getClassStats = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { admin, branchAdmin } = await roleFlags(context);
+    const { admin, branchAdmin, assistant } = await roleFlags(context);
 
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
@@ -189,6 +241,9 @@ export const getClassStats = createServerFn({ method: "GET" })
       (assigned.data ?? []).forEach((c: any) => set.add(c.class_id));
       if (branchAdmin) {
         (await branchAdminClassIds(context, supabaseAdmin)).forEach((id) => set.add(id));
+      }
+      if (assistant) {
+        (await assistantCohortClassIds(context, supabaseAdmin)).forEach((id) => set.add(id));
       }
       allowedIds = Array.from(set);
       if (allowedIds.length === 0) return [];
@@ -492,7 +547,7 @@ export const setStudentVideoProgress = createServerFn({ method: "POST" })
       .parse(i),
   )
   .handler(async ({ data, context }) => {
-    await assertOwnClassOrAdmin(context, data.classId);
+    await assertOwnClassOrAdmin(context, data.classId, "write");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     // 영상이 해당 수강반 소속인지 확인
@@ -588,7 +643,7 @@ export const setStudentProgressStart = createServerFn({ method: "POST" })
       .parse(i),
   )
   .handler(async ({ data, context }) => {
-    await assertOwnClassOrAdmin(context, data.classId);
+    await assertOwnClassOrAdmin(context, data.classId, "write");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     let patch: Record<string, unknown>;
     if (data.videoId) {

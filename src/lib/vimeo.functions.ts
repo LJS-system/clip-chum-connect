@@ -398,8 +398,13 @@ export const getMyStatus = createServerFn({ method: "GET" })
       isStudent: roles.includes("student"),
       isInstructor: roles.includes("instructor"),
       isBranchAdmin: roles.includes("branch_admin"),
+      isAssistant: roles.includes("assistant"),
       branch,
-      isPending: !roles.includes("admin") && !roles.includes("student") && !roles.includes("instructor"),
+      isPending:
+        !roles.includes("admin") &&
+        !roles.includes("student") &&
+        !roles.includes("instructor") &&
+        !roles.includes("assistant"),
     };
   });
 
@@ -579,7 +584,8 @@ export const listUsers = createServerFn({ method: "GET" })
         const isStudent = roles.includes("student");
         const isInstructor = roles.includes("instructor");
         const isBranchAdmin = roles.includes("branch_admin");
-        const isPending = !isAdmin && !isStudent && !isInstructor;
+        const isAssistant = roles.includes("assistant");
+        const isPending = !isAdmin && !isStudent && !isInstructor && !isAssistant;
         const ext = extMap.get(u.id);
         const inst = instMap.get(u.id);
         return {
@@ -598,6 +604,7 @@ export const listUsers = createServerFn({ method: "GET" })
           isStudent,
           isInstructor,
           isBranchAdmin,
+          isAssistant,
           isPending,
           class_count: classCount.get(u.id) ?? 0,
           branch: inst?.branch ?? ext?.branch ?? null,
@@ -609,8 +616,8 @@ export const listUsers = createServerFn({ method: "GET" })
       .filter((u: any) => {
         // 교육원 관리자는 자기 교육원 소속만 조회
         if (scope.branch && !matchesBranch(scope.branch, u.branch)) return false;
-        // 관리자·강사는 external_students 상태와 무관하게 항상 표시
-        if (u.isAdmin || u.isInstructor) return true;
+        // 관리자·강사·조교는 external_students 상태와 무관하게 항상 표시
+        if (u.isAdmin || u.isInstructor || u.isAssistant) return true;
         const status = extMap.get(u.id)?.enrollment_status ?? null;
         // enrollment_status가 null이거나 '휴원'인 학생은 목록에서 제외
         if (!status) return false;
@@ -793,6 +800,7 @@ export const listStudentUsers = createServerFn({ method: "GET" })
           isStudent: true,
           isInstructor: roles.includes("instructor"),
           isBranchAdmin: roles.includes("branch_admin"),
+          isAssistant: roles.includes("assistant"),
           isPending: false,
           class_count: classCount.get(r.auth_user_id) ?? 0,
           branch: r.branch ?? null,
@@ -1483,9 +1491,11 @@ export const listInstructorRoster = createServerFn({ method: "GET" })
       .select("id, name, email, phone, branch, cohort, cohorts, auth_user_id, must_change_password")
       .order("name", { ascending: true });
     if (scope.branch) q = q.ilike("branch", `%${canonicalBranch(scope.branch)}%`);
-    const { data, error } = await q;
+    const { assistantOnlyUserIds } = await import("@/lib/staff-roles.server");
+    const [{ data, error }, assistants] = await Promise.all([q, assistantOnlyUserIds(supabaseAdmin)]);
     if (error) throw new Error(error.message);
-    return data ?? [];
+    // 조교 계정은 강사 명부에 넣지 않는다 (사용자 관리 > 조교 탭에서 관리)
+    return (data ?? []).filter((r: any) => !r.auth_user_id || !assistants.has(r.auth_user_id));
   });
 
 export const updateInstructorEmail = createServerFn({ method: "POST" })
@@ -1715,11 +1725,14 @@ export const createLocalInstructor = createServerFn({ method: "POST" })
         branch: z.string().trim().max(50).optional().default(""),
         cohorts: z.array(z.string().trim().min(1).max(20)).max(50).optional().default([]),
         tempPassword: z.string().trim().max(50).optional().default(""),
+        // 조교(assistant): 같은 기수 수강반·학습현황 조회만 가능
+        role: z.enum(["instructor", "assistant"]).optional().default("instructor"),
       })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
     await assertAdmin(context);
+    const roleLabel = data.role === "assistant" ? "조교" : "강사";
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const email = data.email.toLowerCase();
@@ -1733,7 +1746,7 @@ export const createLocalInstructor = createServerFn({ method: "POST" })
       .eq("email", email)
       .limit(1);
     if (dup && dup.length > 0) {
-      return { ok: false as const, error: "동일한 이메일로 등록된 강사가 이미 있습니다." };
+      return { ok: false as const, error: `동일한 이메일로 등록된 강사·조교가 이미 있습니다.` };
     }
 
     let authUserId: string | null = null;
@@ -1741,7 +1754,10 @@ export const createLocalInstructor = createServerFn({ method: "POST" })
       email,
       password,
       email_confirm: true,
-      user_metadata: { name: data.name, source: "instructor-local" },
+      user_metadata: {
+        name: data.name,
+        source: data.role === "assistant" ? "assistant-local" : "instructor-local",
+      },
     });
     if (createErr) {
       const { data: list } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
@@ -1769,8 +1785,8 @@ export const createLocalInstructor = createServerFn({ method: "POST" })
 
     const { error: roleErr } = await supabaseAdmin
       .from("user_roles")
-      .upsert({ user_id: authUserId, role: "instructor" }, { onConflict: "user_id,role" });
-    if (roleErr) return { ok: false as const, error: roleErr.message };
+      .upsert({ user_id: authUserId, role: data.role }, { onConflict: "user_id,role" });
+    if (roleErr) return { ok: false as const, error: `${roleLabel} 역할 부여 실패: ${roleErr.message}` };
 
     return { ok: true as const, userId: authUserId, email, initialPassword: password };
   });

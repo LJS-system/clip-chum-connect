@@ -28,6 +28,11 @@ async function assertAdminOrInstructorOnClass(
     _role: "admin",
   });
   if (adminData) return;
+  // 조교는 문자 대상 조회·전송 불가 (이력 조회만)
+  if (mode === "write") {
+    const { assertNotAssistant } = await import("@/lib/staff-roles.server");
+    await assertNotAssistant(context);
+  }
   // 교육원 관리자: 담당 교육원(또는 미지정) 수강반이면 허용
   const [{ data: baData }, { data: canAccess }] = await Promise.all([
     context.supabase.rpc("has_role", { _user_id: context.userId, _role: "branch_admin" }),

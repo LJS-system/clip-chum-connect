@@ -7,6 +7,8 @@ type RoleState = {
   isAdmin: boolean;
   isInstructor: boolean;
   isBranchAdmin: boolean;
+  /** 조교: 같은 기수 수강반·학습현황 조회만 (관리자·강사 역할이 함께 있으면 false) */
+  isAssistant: boolean;
   /** 교육원 관리자의 담당 교육원 */
   branch: string | null;
   isLoading: boolean;
@@ -16,6 +18,7 @@ export const AdminRoleContext = createContext<RoleState>({
   isAdmin: false,
   isInstructor: false,
   isBranchAdmin: false,
+  isAssistant: false,
   branch: null,
   isLoading: true,
 });

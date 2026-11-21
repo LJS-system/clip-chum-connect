@@ -509,13 +509,14 @@ export const Route = createFileRoute("/admin/classes/$id")({
 function ClassDetailPage() {
   const { id } = Route.useParams();
   const qc = useQueryClient();
-  const { isAdmin, isInstructor, isBranchAdmin } = useAdminRole();
+  const { isAdmin, isInstructor, isBranchAdmin, isAssistant } = useAdminRole();
   const { data: cls } = useQuery({
     queryKey: ["admin", "class", id],
     queryFn: () => getClass({ data: { id } }),
   });
   // 쓰기 권한: 관리자 / 생성자 / 이 수강반에 배정된 강사만 true
-  const canWrite = !cls || (cls as any).can_write !== false;
+  // 조교는 어떤 반이든 조회 전용
+  const canWrite = !isAssistant && (!cls || (cls as any).can_write !== false);
   const [unlockOpen, setUnlockOpen] = useState(false);
   const { data: unlockSummary, isFetching: unlockSummaryLoading, isError: unlockSummaryFailed } = useQuery({
     queryKey: ["video-unlocks", id, "summary"],
@@ -1013,14 +1014,14 @@ function ClassDetailPage() {
   useEffect(() => {
     if (branchAutoAppliedRef.current) return;
     if (isAdmin) return;
-    if (!isInstructor) return;
+    if (!isInstructor && !isAssistant) return;
     const myBranch = (studentStats as any[])[0]?.my_branch;
     if (!myBranch) return;
     if (statsBranchOptions.includes(myBranch)) {
       branchAutoAppliedRef.current = true;
       setStatsBranchFilter(myBranch);
     }
-  }, [isAdmin, isInstructor, studentStats, statsBranchOptions]);
+  }, [isAdmin, isInstructor, isAssistant, studentStats, statsBranchOptions]);
   const filteredStudentStats = useMemo(() => {
     const filtered = (studentStats as any[]).filter((s) => {
       const isCompleted = s.video_total > 0 && s.completed === s.video_total;
@@ -1180,7 +1181,15 @@ function ClassDetailPage() {
 
       {!canWrite && !isBranchAdmin && (
         <p className="rounded-md border border-dashed bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-          이 수강반에 배정된 강사가 아니므로 <span className="font-semibold">조회만</span> 가능합니다. 배정·설정 변경이 필요하면 관리자에게 요청하세요.
+          {isAssistant ? (
+            <>
+              조교 계정은 수강반과 학습 현황을 <span className="font-semibold">조회만</span> 할 수 있습니다.
+            </>
+          ) : (
+            <>
+              이 수강반에 배정된 강사가 아니므로 <span className="font-semibold">조회만</span> 가능합니다. 배정·설정 변경이 필요하면 관리자에게 요청하세요.
+            </>
+          )}
         </p>
       )}
 

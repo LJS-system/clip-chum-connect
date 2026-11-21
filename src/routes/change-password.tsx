@@ -68,7 +68,7 @@ function ChangePasswordPage() {
       toast.success("비밀번호가 변경되었습니다.");
       try {
         const s = await getMyStatus();
-        navigate({ to: s.isAdmin || s.isInstructor ? "/admin" : "/", replace: true });
+        navigate({ to: s.isAdmin || s.isInstructor || s.isAssistant ? "/admin" : "/", replace: true });
       } catch {
         navigate({ to: "/", replace: true });
       }

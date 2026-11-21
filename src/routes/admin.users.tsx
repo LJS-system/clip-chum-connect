@@ -57,6 +57,7 @@ type UserRow = {
   isStudent: boolean;
   isInstructor: boolean;
   isBranchAdmin: boolean;
+  isAssistant?: boolean;
   isPending: boolean;
   class_count: number;
   branch: string | null;
@@ -73,7 +74,7 @@ const usersQueryOptions = queryOptions({
   gcTime: 10 * 60_000,
 });
 
-type TabKey = "admin" | "branch_admin" | "instructor" | "student";
+type TabKey = "admin" | "branch_admin" | "instructor" | "assistant" | "student";
 
 
 export const Route = createFileRoute("/admin/users")({
@@ -84,13 +85,14 @@ function Badge({
   tone,
   children,
 }: {
-  tone: "admin" | "branch_admin" | "instructor" | "student";
+  tone: "admin" | "branch_admin" | "instructor" | "assistant" | "student";
   children: React.ReactNode;
 }) {
   const map = {
     admin: "bg-primary/10 text-primary border-primary/20",
     branch_admin: "bg-amber-100 text-amber-700 border-amber-200",
     instructor: "bg-sky-100 text-sky-700 border-sky-200",
+    assistant: "bg-violet-100 text-violet-700 border-violet-200",
     student: "bg-accent/60 text-accent-foreground border-accent",
   } as const;
   return (
@@ -173,6 +175,7 @@ function UsersPage() {
     admin: 1,
     branch_admin: 1,
     instructor: 1,
+    assistant: 1,
     student: 1,
   });
 
@@ -184,14 +187,16 @@ function UsersPage() {
     const admin: UserRow[] = [];
     const branch_admin: UserRow[] = [];
     const instructor: UserRow[] = [];
+    const assistant: UserRow[] = [];
     const student: UserRow[] = [];
     for (const u of users) {
       if (u.isAdmin) admin.push(u);
       if (u.isBranchAdmin) branch_admin.push(u);
       if (u.isInstructor) instructor.push(u);
+      if (u.isAssistant) assistant.push(u);
       if (u.isStudent) student.push(u);
     }
-    return { admin, branch_admin, instructor, student };
+    return { admin, branch_admin, instructor, assistant, student };
   }, [users]);
 
   // 학생 탭: 서버 사이드 검색·페이지네이션 (전체 사용자 로딩 없이 빠르게 조회)
@@ -237,17 +242,18 @@ function UsersPage() {
 
   const cohortOptions = useMemo(() => {
     const set = new Set<string>();
-    buckets.instructor.forEach((u) => {
+    [...buckets.instructor, ...buckets.assistant].forEach((u) => {
       (((u as any).cohorts ?? []) as string[]).forEach((c) => {
         const v = (c ?? "").trim();
         if (v) set.add(v);
       });
     });
     return Array.from(set).sort((a, b) => b.localeCompare(a, "ko"));
-  }, [buckets.instructor]);
+  }, [buckets.instructor, buckets.assistant]);
 
 
-  const isStaffTab = tab === "instructor" || tab === "branch_admin";
+  const isAssistantTab = tab === "assistant";
+  const isStaffTab = tab === "instructor" || tab === "branch_admin" || isAssistantTab;
 
   const filtered = useMemo(() => {
     if (isStudentTab) return studentQuery.data?.rows ?? [];
@@ -263,7 +269,7 @@ function UsersPage() {
         ? rows
         : rows.filter((u) => matchesBranch(branchFilter, u.branch));
     const byCohort =
-      !(tab === "instructor" || tab === "branch_admin") || cohortFilter.length === 0
+      !isStaffTab || cohortFilter.length === 0
         ? byBranch
         : byBranch.filter((u) => {
             const list = ((u as any).cohorts ?? []) as string[];
@@ -286,7 +292,7 @@ function UsersPage() {
         if (!aExact && bExact) return 1;
         return a.nickname.localeCompare(b.nickname, "ko");
       });
-  }, [buckets, tab, search, branchFilter, cohortFilter, isStudentTab, studentQuery.data]);
+  }, [buckets, tab, search, branchFilter, cohortFilter, isStudentTab, isStaffTab, studentQuery.data]);
 
   const studentTotal = studentQuery.data?.total ?? 0;
   const totalCount = isStudentTab ? studentTotal : filtered.length;
@@ -350,15 +356,19 @@ function UsersPage() {
         ? "중간 관리자"
         : u.isInstructor
           ? "강사"
-          : "학생";
-  const roleTone = (u: UserRow): "admin" | "branch_admin" | "instructor" | "student" =>
+          : u.isAssistant
+            ? "조교"
+            : "학생";
+  const roleTone = (u: UserRow): "admin" | "branch_admin" | "instructor" | "assistant" | "student" =>
     u.isAdmin
       ? "admin"
       : u.isBranchAdmin
         ? "branch_admin"
         : u.isInstructor
           ? "instructor"
-          : "student";
+          : u.isAssistant
+            ? "assistant"
+            : "student";
 
 
   return (
@@ -374,6 +384,9 @@ function UsersPage() {
           <div className="ml-auto flex items-center gap-2">
             {canManage && tab === "student" && <LocalStudentDialog onCreated={refetch} />}
             {canManage && tab === "instructor" && <LocalInstructorDialog onCreated={refetch} />}
+            {canManage && tab === "assistant" && (
+              <LocalInstructorDialog role="assistant" onCreated={refetch} />
+            )}
             {/* <Button
 
               size="sm"
@@ -412,7 +425,7 @@ function UsersPage() {
             setCohortFilter([]);
           }}
         >
-          <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-4 sm:gap-0">
+          <TabsList className="grid w-full grid-cols-2 gap-1 sm:grid-cols-5 sm:gap-0">
             <TabsTrigger value="admin" className="shrink-0 gap-1.5">
               <ShieldCheck className="h-3.5 w-3.5 shrink-0" /> 관리자
               <span className="ml-1 rounded-full bg-primary/10 px-1.5 text-[10px] font-semibold text-primary">
@@ -429,6 +442,12 @@ function UsersPage() {
               <GraduationCap className="h-3.5 w-3.5 shrink-0" /> 강사
               <span className="ml-1 rounded-full bg-sky-100 px-1.5 text-[10px] font-semibold text-sky-700">
                 {buckets.instructor.length}
+              </span>
+            </TabsTrigger>
+            <TabsTrigger value="assistant" className="shrink-0 gap-1.5">
+              <Users className="h-3.5 w-3.5 shrink-0" /> 조교
+              <span className="ml-1 rounded-full bg-violet-100 px-1.5 text-[10px] font-semibold text-violet-700">
+                {buckets.assistant.length}
               </span>
             </TabsTrigger>
             <TabsTrigger value="student" className="shrink-0 gap-1.5">
@@ -448,7 +467,7 @@ function UsersPage() {
               value={search}
               onChange={(v) => {
                 setSearch(v);
-                setPages({ admin: 1, branch_admin: 1, instructor: 1, student: 1 });
+                setPages({ admin: 1, branch_admin: 1, instructor: 1, assistant: 1, student: 1 });
               }}
               placeholder="이름, 전화번호, 이메일 (띄어쓰기로 여러 명 검색)"
               className="w-full max-w-sm"
@@ -457,7 +476,7 @@ function UsersPage() {
               value={branchFilter}
               onValueChange={(v) => {
                 setBranchFilter(v);
-                setPages({ admin: 1, branch_admin: 1, instructor: 1, student: 1 });
+                setPages({ admin: 1, branch_admin: 1, instructor: 1, assistant: 1, student: 1 });
               }}
             >
               <SelectTrigger className="h-9 w-full sm:w-48">
@@ -475,7 +494,7 @@ function UsersPage() {
                 value={classFilter}
                 onValueChange={(v) => {
                   setClassFilter(v as "all" | "has_class" | "no_class");
-                  setPages({ admin: 1, branch_admin: 1, instructor: 1, student: 1 });
+                  setPages({ admin: 1, branch_admin: 1, instructor: 1, assistant: 1, student: 1 });
                 }}
               >
                 <SelectTrigger className="h-9 w-full sm:w-44">
@@ -494,7 +513,7 @@ function UsersPage() {
                 selected={cohortFilter}
                 onChange={(v) => {
                   setCohortFilter(v);
-                  setPages({ admin: 1, branch_admin: 1, instructor: 1, student: 1 });
+                  setPages({ admin: 1, branch_admin: 1, instructor: 1, assistant: 1, student: 1 });
                 }}
                 placeholder="기수 전체"
               />
@@ -602,7 +621,28 @@ function UsersPage() {
                       <td className="px-3 py-2 sm:px-4">
                         <Badge tone={roleTone(u)}>{roleLabel(u)}</Badge>
                       </td>
-                      {isStaffTab && (
+                      {isAssistantTab && canManage && (
+                        <td className="hidden px-3 py-2 lg:table-cell">
+                          {/* 조교는 이 기수의 수강반만 조회할 수 있으므로 여기서 바로 고친다 */}
+                          <CohortMultiSelect
+                            options={COHORT_OPTIONS}
+                            selected={(((u as any).cohorts ?? []) as string[])}
+                            assignMode
+                            placeholder="미지정"
+                            allLabel="전체 기수"
+                            width="w-40"
+                            onChange={async (next) => {
+                              try {
+                                await updateInstructorCohort({ data: { authUserId: u.id, cohorts: next } });
+                                qc.invalidateQueries({ queryKey: ["admin", "users"] });
+                              } catch (e: any) {
+                                toast.error(e?.message ?? "기수 저장 실패");
+                              }
+                            }}
+                          />
+                        </td>
+                      )}
+                      {isStaffTab && !(isAssistantTab && canManage) && (
                         <td className="hidden px-3 py-2 lg:table-cell">
                           <span className="text-xs text-muted-foreground">
                             {(() => {
@@ -650,7 +690,7 @@ function UsersPage() {
                               onSaved={() => studentQuery.refetch()}
                             />
                           )}
-                          {canManage && isStaffTab && !u.isAdmin && (
+                          {canManage && isStaffTab && !isAssistantTab && !u.isAdmin && (
                             <Button
                               size="sm"
                               variant={u.isBranchAdmin ? "outline" : "default"}
