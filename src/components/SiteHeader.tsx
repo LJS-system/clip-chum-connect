@@ -42,7 +42,7 @@ export function SiteHeader() {
       if (!sessionData.session) return null;
       try {
         const [r, n, s] = await Promise.all([getMyRole(), getMyDisplayName(), getMyStatus()]);
-        return { isAdmin: r.isAdmin, name: n.name, isInstructor: s.isInstructor };
+        return { isAdmin: r.isAdmin, name: n.name, isInstructor: s.isInstructor || Boolean((s as any).isAssistant) };
       } catch {
         return null;
       }

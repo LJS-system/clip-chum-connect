@@ -34,7 +34,15 @@ const EMPTY = {
   tempPassword: "",
 };
 
-export function LocalInstructorDialog({ onCreated }: { onCreated: () => void }) {
+export function LocalInstructorDialog({
+  onCreated,
+  role = "instructor",
+}: {
+  onCreated: () => void;
+  /** assistant: 조교 계정 (같은 기수 수강반·학습현황 조회만) */
+  role?: "instructor" | "assistant";
+}) {
+  const roleName = role === "assistant" ? "조교" : "강사";
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ ...EMPTY });
@@ -54,18 +62,22 @@ export function LocalInstructorDialog({ onCreated }: { onCreated: () => void }) 
     }
     setBusy(true);
     try {
-      const res = await createLocalInstructor({ data: { ...form, cohorts } });
+      if (role === "assistant" && cohorts.length === 0) {
+        toast.error("조교가 볼 기수를 하나 이상 골라 주세요.");
+        return;
+      }
+      const res = await createLocalInstructor({ data: { ...form, cohorts, role } });
       if (!res.ok) {
         toast.error(res.error);
         return;
       }
-      toast.success(`강사가 등록되었습니다. 초기 비밀번호: ${res.initialPassword}`);
+      toast.success(`${roleName}가 등록되었습니다. 초기 비밀번호: ${res.initialPassword}`);
       setForm({ ...EMPTY });
       setCohorts([]);
       setOpen(false);
       onCreated();
     } catch (err: any) {
-      toast.error(err?.message ?? "강사 등록에 실패했습니다.");
+      toast.error(err?.message ?? `${roleName} 등록에 실패했습니다.`);
     } finally {
       setBusy(false);
     }
@@ -76,15 +88,17 @@ export function LocalInstructorDialog({ onCreated }: { onCreated: () => void }) 
       <DialogTrigger asChild>
         <Button size="sm" variant="outline" className="gap-1.5">
           <UserPlus className="h-4 w-4" />
-          강사 직접 등록
+          {roleName} 직접 등록
         </Button>
       </DialogTrigger>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>강사 직접 등록</DialogTitle>
+          <DialogTitle>{roleName} 직접 등록</DialogTitle>
           <DialogDescription>
-            강사 명부에 추가하고 이메일 기반 로그인 계정을 즉시 생성합니다. 초기 비밀번호는 첫
-            로그인 시 변경하도록 안내됩니다.
+            {role === "assistant"
+              ? "조교 로그인 계정을 즉시 만듭니다. 조교는 고른 기수의 수강반과 학습 현황만 조회할 수 있고, 영상 업로드·수강반 생성·수정은 할 수 없습니다. "
+              : "강사 명부에 추가하고 이메일 기반 로그인 계정을 즉시 생성합니다. "}
+            초기 비밀번호는 첫 로그인 시 변경하도록 안내됩니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -125,7 +139,7 @@ export function LocalInstructorDialog({ onCreated }: { onCreated: () => void }) 
             </Select>
           </div>
           <div className="space-y-1.5">
-            <Label>기수</Label>
+            <Label>기수{role === "assistant" ? " *" : ""}</Label>
             <CohortMultiSelect
               options={COHORT_OPTIONS}
               selected={cohorts}

@@ -38,7 +38,7 @@ function Home() {
       try {
         const { getMyStatus } = await import("@/lib/vimeo.functions");
         const s = await getMyStatus();
-        if (s.isAdmin || s.isInstructor) {
+        if (s.isAdmin || s.isInstructor || s.isAssistant) {
           navigate({ to: "/admin", replace: true });
           return;
         }

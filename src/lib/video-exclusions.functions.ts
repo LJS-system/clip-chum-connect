@@ -43,6 +43,9 @@ export const setVideoExclusion = createServerFn({ method: "POST" })
       .parse(i),
   )
   .handler(async ({ data, context }) => {
+    // 조교는 조회만 가능 — 숨기기/보이기 불가
+    const { assertNotAssistant } = await import("@/lib/staff-roles.server");
+    await assertNotAssistant(context);
     await assertVideoStaffAccess(context, data.videoId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 

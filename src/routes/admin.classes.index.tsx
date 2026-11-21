@@ -41,6 +41,7 @@ import { ClearableSearchInput } from "@/components/admin/ClearableSearchInput";
 
 import { supabase } from "@/integrations/supabase/client";
 import { getMyCohorts } from "@/lib/vimeo.functions";
+import { useAdminRole } from "@/components/AdminRole";
 import { prefetchSignedThumbUrls, extractStoragePath } from "@/lib/signed-url-cache";
 
 const BRANCH_OPTIONS = ["상동", "청라", "송도"] as const;
@@ -52,6 +53,8 @@ export const Route = createFileRoute("/admin/classes/")({
 
 
 function ClassesPage() {
+  // 조교: 목록 조회만 (생성·카테고리·삭제 숨김)
+  const { isAssistant } = useAdminRole();
   const qc = useQueryClient();
   const { data: classes = [], isLoading } = useQuery({
     queryKey: ["admin", "classes"],
@@ -382,12 +385,16 @@ function ClassesPage() {
         <TabsTrigger value="list" className="gap-1">
           <List className="h-4 w-4" /> 수강반 목록
         </TabsTrigger>
-        <TabsTrigger value="create" className="gap-1">
-          <Plus className="h-4 w-4" /> 수강반 생성
-        </TabsTrigger>
-        <TabsTrigger value="categories" className="gap-1">
-          <Tag className="h-4 w-4" /> 카테고리
-        </TabsTrigger>
+        {!isAssistant && (
+          <TabsTrigger value="create" className="gap-1">
+            <Plus className="h-4 w-4" /> 수강반 생성
+          </TabsTrigger>
+        )}
+        {!isAssistant && (
+          <TabsTrigger value="categories" className="gap-1">
+            <Tag className="h-4 w-4" /> 카테고리
+          </TabsTrigger>
+        )}
       </TabsList>
 
       <TabsContent value="list">
@@ -508,12 +515,14 @@ function ClassesPage() {
                     <div className="mt-4 flex items-center gap-2">
                       <Button asChild size="sm" variant="outline" className="flex-1">
                         <Link to="/admin/classes/$id" params={{ id: c.id }}>
-                          <Users className="mr-1 h-4 w-4" /> 관리
+                          <Users className="mr-1 h-4 w-4" /> {isAssistant ? "보기" : "관리"}
                         </Link>
                       </Button>
-                      <Button size="sm" variant="ghost" onClick={() => remove(c.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {!isAssistant && (
+                        <Button size="sm" variant="ghost" onClick={() => remove(c.id)}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -525,6 +534,7 @@ function ClassesPage() {
         </Card>
       </TabsContent>
 
+      {!isAssistant && (
       <TabsContent value="create">
         <Card>
           <CardHeader>
@@ -825,7 +835,9 @@ function ClassesPage() {
           </CardContent>
         </Card>
       </TabsContent>
+      )}
 
+      {!isAssistant && (
       <TabsContent value="categories">
         <Card>
           <CardHeader>
@@ -950,6 +962,7 @@ function ClassesPage() {
           </CardContent>
         </Card>
       </TabsContent>
+      )}
     </Tabs>
   );
 }

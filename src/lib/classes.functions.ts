@@ -49,6 +49,15 @@ async function assertAdminOrInstructor(context: { supabase: any; userId: string 
     throw new Error("관리자 또는 강사만 접근할 수 있습니다.");
 }
 
+// 조회 전용 목록(교육원·학교 필터 등): 관리자·교육원 관리자·강사·조교
+async function assertStaffReader(context: { supabase: any; userId: string }) {
+  const { loadMyRoles } = await import("@/lib/staff-roles.server");
+  const roles = await loadMyRoles(context);
+  if (!["admin", "branch_admin", "instructor", "assistant"].some((r) => roles.has(r))) {
+    throw new Error("관리자·강사·조교만 접근할 수 있습니다.");
+  }
+}
+
 function isClassActive(active_from: string | null, active_to: string | null) {
   const today = new Date().toISOString().slice(0, 10);
   if (active_from && today < active_from) return false;
@@ -64,6 +73,11 @@ async function assertOwnClassOrAdmin(
 
   const admin = await isAdmin(context);
   if (admin) return;
+  // 조교는 조회만 가능
+  if (mode === "write") {
+    const { assertNotAssistant } = await import("@/lib/staff-roles.server");
+    await assertNotAssistant(context);
+  }
   // 교육원 관리자: 담당 교육원(또는 미지정) 수강반이면 허용
   {
     const { data: canAccess } = await context.supabase.rpc("instructor_can_access_class", {
@@ -574,7 +588,7 @@ export const searchStudentsByNameOrPhone = createServerFn({ method: "POST" })
 export const listStudentBranches = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertAdminOrInstructor(context);
+    await assertStaffReader(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data, error } = await supabaseAdmin
       .from("external_students")
@@ -595,7 +609,7 @@ export const listStudentBranches = createServerFn({ method: "GET" })
 export const listStudentFilterOptions = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertAdminOrInstructor(context);
+    await assertStaffReader(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data, error } = await supabaseAdmin
       .from("external_students")
@@ -1133,8 +1147,11 @@ export const searchInstructors = createServerFn({ method: "POST" })
       .or(orExpr)
       .limit(100);
     if (error) throw new Error(error.message);
+    // 조교 계정은 강사로 배정할 수 없으므로 검색 결과에서 뺀다
+    const { assistantOnlyUserIds } = await import("@/lib/staff-roles.server");
+    const assistants = await assistantOnlyUserIds(supabaseAdmin);
     const lowered = terms.map((t) => t.toLowerCase());
-    const sorted = (rows ?? []).sort((a: any, b: any) => {
+    const sorted = (rows ?? []).filter((r: any) => !assistants.has(r.auth_user_id)).sort((a: any, b: any) => {
       const an = (a.name ?? "").toLowerCase();
       const bn = (b.name ?? "").toLowerCase();
       const aExact = lowered.includes(an) ? 0 : 1;
@@ -1159,6 +1176,11 @@ export const assignInstructor = createServerFn({ method: "POST" })
     await assertAdminOrInstructor(context);
     await assertOwnClassOrAdmin(context, data.classId);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // 조교를 강사로 배정하면 수정 권한이 생기므로 막는다
+    const { assistantOnlyUserIds } = await import("@/lib/staff-roles.server");
+    if ((await assistantOnlyUserIds(supabaseAdmin)).has(data.userId)) {
+      throw new Error("조교 계정은 강사로 배정할 수 없습니다.");
+    }
     const { error } = await supabaseAdmin
       .from("class_instructors")
       .upsert(

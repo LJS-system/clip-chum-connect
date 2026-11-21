@@ -54,20 +54,49 @@ const instructorNavItems = [
   { title: "휴지통", url: "/admin/trash", icon: Trash2 },
 ];
 
+// 조교: 같은 기수 수강반·학습현황 조회만
+const assistantNavItems = [
+  { title: "대시보드", url: "/admin/dashboard", icon: BarChart3 },
+  { title: "수강반 조회", url: "/admin/classes", icon: GraduationCap },
+];
+const ASSISTANT_ALLOWED_PATHS = ["/admin/dashboard", "/admin/classes"];
+// "/admin"은 대시보드로 넘겨 주는 주소라 허용
+function assistantCanOpen(path: string) {
+  const p = path.replace(/\/+$/, "");
+  if (p === "/admin") return true;
+  return ASSISTANT_ALLOWED_PATHS.some((a) => p === a || p.startsWith(`${a}/`));
+}
+
 function AdminSidebar() {
   const currentPath = useRouterState({ select: (r) => r.location.pathname });
   const { state, setOpenMobile } = useSidebar();
   const isExpanded = state === "expanded";
-  const { isAdmin, isInstructor, isBranchAdmin } = useAdminRole();
-  const items = isAdmin ? adminNavItems : isBranchAdmin ? branchAdminNavItems : instructorNavItems;
+  const { isAdmin, isInstructor, isBranchAdmin, isAssistant } = useAdminRole();
+  const items = isAdmin
+    ? adminNavItems
+    : isBranchAdmin
+      ? branchAdminNavItems
+      : isAssistant
+        ? assistantNavItems
+        : instructorNavItems;
   const label = isAdmin
     ? "관리자"
     : isBranchAdmin
       ? "교육원 관리자"
       : isInstructor
         ? "강사"
-        : "메뉴";
-  const badgeText = isAdmin ? "관리자" : isBranchAdmin ? "교육원 관리자" : isInstructor ? "강사" : "";
+        : isAssistant
+          ? "조교"
+          : "메뉴";
+  const badgeText = isAdmin
+    ? "관리자"
+    : isBranchAdmin
+      ? "교육원 관리자"
+      : isInstructor
+        ? "강사"
+        : isAssistant
+          ? "조교"
+          : "";
 
   const handleNavClick = () => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -114,10 +143,12 @@ function AdminSidebar() {
 
 function AdminLayout() {
   const navigate = useNavigate();
+  const currentPath = useRouterState({ select: (r) => r.location.pathname });
   const [checking, setChecking] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isInstructor, setIsInstructor] = useState(false);
   const [isBranchAdmin, setIsBranchAdmin] = useState(false);
+  const [isAssistant, setIsAssistant] = useState(false);
   const [branch, setBranch] = useState<string | null>(null);
 
   useEffect(() => {
@@ -131,10 +162,14 @@ function AdminLayout() {
       try {
         try { await ensureStudentRole(); } catch {}
         const s = await getMyStatus();
-        if (s.isAdmin || s.isInstructor || (s as any).isBranchAdmin) {
+        if (s.isAdmin || s.isInstructor || (s as any).isBranchAdmin || s.isAssistant) {
           setIsAdmin(s.isAdmin);
           setIsInstructor(s.isInstructor);
           setIsBranchAdmin(Boolean((s as any).isBranchAdmin));
+          // 관리자·강사 역할이 함께 있으면 그 권한을 따른다
+          setIsAssistant(
+            Boolean(s.isAssistant) && !s.isAdmin && !s.isInstructor && !(s as any).isBranchAdmin,
+          );
           setBranch(((s as any).branch as string | null) ?? null);
         } else if (s.isStudent) {
           // 학생 계정은 관리자 화면 대신 홈으로
@@ -171,7 +206,7 @@ function AdminLayout() {
     );
   }
 
-  if (!isAdmin && !isInstructor && !isBranchAdmin) {
+  if (!isAdmin && !isInstructor && !isBranchAdmin && !isAssistant) {
     return (
       <div className="min-h-screen">
         <SiteHeader />
@@ -190,7 +225,7 @@ function AdminLayout() {
   }
 
   return (
-    <AdminRoleContext.Provider value={{ isAdmin, isInstructor, isBranchAdmin, branch, isLoading: false }}>
+    <AdminRoleContext.Provider value={{ isAdmin, isInstructor, isBranchAdmin, isAssistant, branch, isLoading: false }}>
       <SidebarProvider>
         <div className="flex min-h-screen w-full bg-background">
           <AdminSidebar />
@@ -199,7 +234,20 @@ function AdminLayout() {
             <SiteHeader />
             <main className="flex-1 p-3 md:p-6">
               <div className="mx-auto max-w-5xl">
-                <Outlet />
+                {isAssistant && !assistantCanOpen(currentPath) ? (
+                  <div className="mx-auto max-w-md p-10 text-center">
+                    <ShieldCheck className="mx-auto h-10 w-10 text-muted-foreground" />
+                    <h2 className="mt-4 text-xl font-semibold">조교 계정은 볼 수 없는 메뉴입니다.</h2>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      조교는 수강반과 학습 현황만 조회할 수 있습니다.
+                    </p>
+                    <Button asChild variant="outline" className="mt-4">
+                      <Link to="/admin/classes">수강반 조회로</Link>
+                    </Button>
+                  </div>
+                ) : (
+                  <Outlet />
+                )}
               </div>
             </main>
           </div>
@@ -210,8 +258,16 @@ function AdminLayout() {
 }
 
 function MobileHeader() {
-  const { isAdmin, isInstructor, isBranchAdmin } = useAdminRole();
-  const label = isAdmin ? "관리자" : isBranchAdmin ? "교육원 관리자" : isInstructor ? "강사" : "";
+  const { isAdmin, isInstructor, isBranchAdmin, isAssistant } = useAdminRole();
+  const label = isAdmin
+    ? "관리자"
+    : isBranchAdmin
+      ? "교육원 관리자"
+      : isInstructor
+        ? "강사"
+        : isAssistant
+          ? "조교"
+          : "";
 
   return (
     <div className="flex items-center gap-2 border-b bg-card px-2 py-2 md:hidden">
