@@ -1062,20 +1062,36 @@ function ClassDetailPage() {
     return sorted;
   }, [studentStats, statsFilter, statsBranchFilter, statsSort]);
 
+  // 학생 이름 검색 (띄어쓰기로 여러 명, 연락처 숫자도 가능) — 목록에만 적용, 반 평균 요약에는 적용하지 않음
+  const [statsNameQuery, setStatsNameQuery] = useState("");
+  const searchedStudentStats = useMemo(() => {
+    const tokens = statsNameQuery.split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return filteredStudentStats as any[];
+    return (filteredStudentStats as any[]).filter((s) => {
+      const name = (s.name || "").replace(/\s+/g, "").toLowerCase();
+      const phone = (s.phone || "").replace(/[^0-9]/g, "");
+      return tokens.some((t) => {
+        const norm = t.toLowerCase();
+        const digits = t.replace(/[^0-9]/g, "");
+        return name.includes(norm) || (digits.length >= 3 && phone.includes(digits));
+      });
+    });
+  }, [filteredStudentStats, statsNameQuery]);
+
   const [statsPageSize, setStatsPageSize] = useState(20);
   const [statsPage, setStatsPage] = useState(1);
   const [openStudentIds, setOpenStudentIds] = useState<string[]>([]);
-  const statsTotalPages = Math.max(1, Math.ceil(filteredStudentStats.length / statsPageSize));
+  const statsTotalPages = Math.max(1, Math.ceil(searchedStudentStats.length / statsPageSize));
   useEffect(() => {
     setStatsPage(1);
-  }, [statsFilter, statsBranchFilter, statsSort, filteredStudentStats.length, statsPageSize]);
+  }, [statsFilter, statsBranchFilter, statsSort, statsNameQuery, searchedStudentStats.length, statsPageSize]);
   const pagedStudentStats = useMemo(
     () =>
-      (filteredStudentStats as any[]).slice(
+      searchedStudentStats.slice(
         (statsPage - 1) * statsPageSize,
         statsPage * statsPageSize,
       ),
-    [filteredStudentStats, statsPage, statsPageSize],
+    [searchedStudentStats, statsPage, statsPageSize],
   );
 
 
@@ -2138,6 +2154,14 @@ function ClassDetailPage() {
             </CardTitle>
 
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+              <ClearableSearchInput
+                value={statsNameQuery}
+                onChange={setStatsNameQuery}
+                placeholder="학생 이름 검색"
+                size="sm"
+                className="w-full sm:w-44"
+                inputClassName="text-xs"
+              />
               <div className="flex items-center gap-1">
                 <Input
                   type="date"
@@ -2222,8 +2246,12 @@ function ClassDetailPage() {
         <CardContent>
           {studentStats.length === 0 ? (
             <p className="text-sm text-muted-foreground">배정된 학생이 없습니다.</p>
-          ) : filteredStudentStats.length === 0 ? (
-            <p className="text-sm text-muted-foreground">선택한 필터에 해당하는 학생이 없습니다.</p>
+          ) : searchedStudentStats.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {filteredStudentStats.length > 0 && statsNameQuery.trim()
+                ? `"${statsNameQuery.trim()}" 이름의 학생이 없습니다.`
+                : "선택한 필터에 해당하는 학생이 없습니다."}
+            </p>
           ) : (
             <div>
               <div className="hidden grid-cols-[1fr_80px_100px_150px] gap-2 border-b px-3 pb-2 text-xs text-muted-foreground sm:grid">
@@ -2256,7 +2284,7 @@ function ClassDetailPage() {
               </Accordion>
               <div className="mt-3 flex flex-col items-center justify-between gap-2 border-t pt-3 sm:flex-row">
                 <span className="text-xs text-muted-foreground">
-                  총 {filteredStudentStats.length}명 · {statsPage} / {statsTotalPages} 페이지
+                  총 {searchedStudentStats.length}명 · {statsPage} / {statsTotalPages} 페이지
                 </span>
                 <div className="flex items-center gap-2">
                   <Button
