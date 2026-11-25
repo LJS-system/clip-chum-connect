@@ -307,6 +307,8 @@ function StudentVideoDetail({
       }
       g.items.push(v);
     }
+    // 폴더 안 영상은 최근에 올린 영상부터 (서버는 등록일 오래된 순으로 보냄)
+    for (const g of map.values()) g.items.reverse();
     return [...map.values()].sort((a, b) => a.sort - b.sort || (a.name ?? "").localeCompare(b.name ?? ""));
   })();
 
